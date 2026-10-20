@@ -6,13 +6,13 @@ import logging
 import shutil
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -157,6 +157,7 @@ class TelegramUI:
 
     def _register_handlers(self) -> None:
         self.router.message.register(self.start, CommandStart())
+        self.router.message.register(self.limits, Command("limits"))
         self.router.message.register(self.receive_add_name, InputState.add_name)
         self.router.message.register(self.receive_rename, InputState.rename_account)
         self.router.callback_query.register(self.open_main, F.data == "main")
@@ -186,6 +187,18 @@ class TelegramUI:
         await self.db.upsert_user(owner_id, message.chat.id)
         await self.view.create(owner_id, message.chat.id, *main_screen())
         logger.info("Пользователь открыл интерфейс user=%s", owner_id)
+
+    async def limits(self, message: Message) -> None:
+        """Send the latest persisted readings without changing the main menu."""
+        if message.from_user is None:
+            return
+        owner_id = message.from_user.id
+        accounts = await self.db.list_accounts(owner_id=owner_id)
+        states = {account.id: await self.db.get_states(account.id) for account in accounts}
+        blocks = format_limits_blocks(accounts, states)
+        for text in split_telegram_text(blocks or ["Добавленных аккаунтов Codex пока нет."]):
+            await message.answer(text)
+        logger.info("Пользователь запросил лимиты user=%s accounts=%s", owner_id, len(accounts))
 
     async def _accept(self, callback: CallbackQuery) -> bool:
         if not await self.view.is_current(callback):
@@ -646,6 +659,60 @@ def format_state(state: DetectorState | None) -> str:
         f"Осталось: {reading.remaining_percent}%\n"
         f"Следующий сброс: {format_time(reading.resets_at)}"
     )
+
+
+def format_limits_blocks(
+    accounts: list[Account],
+    states: dict[str, dict[WindowKind, DetectorState]],
+    *,
+    now_timestamp: int | None = None,
+) -> list[str]:
+    """Format the latest reliable readings for the /limits command."""
+    now = now_timestamp if now_timestamp is not None else int(datetime.now(timezone.utc).timestamp())
+    blocks: list[str] = []
+    for account in accounts:
+        account_states = states.get(account.id, {})
+        blocks.append(
+            "\n".join(
+                [
+                    f"<b>{html.escape(account.display_name)}:</b>",
+                    format_limits_line("5ч", account_states.get(WindowKind.FIVE_HOUR), now),
+                    format_limits_line("Недельный", account_states.get(WindowKind.WEEKLY), now),
+                ]
+            )
+        )
+    return blocks
+
+
+def format_limits_line(label: str, state: DetectorState | None, now_timestamp: int) -> str:
+    if state is None:
+        return f"{label} - данных пока нет"
+    reading = state.pending_reading or state.reading
+    if reading.resets_at is None:
+        return f"{label} - осталось: {reading.remaining_percent}% | Время сброса неизвестно"
+    remaining_seconds = max(0, reading.resets_at - now_timestamp)
+    hours, remainder = divmod(remaining_seconds, 3600)
+    minutes = remainder // 60
+    return (
+        f"{label} - осталось: {reading.remaining_percent}% | "
+        f"Сброс через {hours} ч {minutes} мин ({format_time(reading.resets_at)})"
+    )
+
+
+def split_telegram_text(blocks: list[str], max_length: int = 4096) -> list[str]:
+    """Keep every account block whole while staying inside Telegram's message limit."""
+    messages: list[str] = []
+    current = ""
+    for block in blocks:
+        candidate = block if not current else f"{current}\n\n{block}"
+        if current and len(candidate) > max_length:
+            messages.append(current)
+            current = block
+        else:
+            current = candidate
+    if current:
+        messages.append(current)
+    return messages
 
 
 async def delete_temporary(bot: Bot, chat_id: int, *message_ids: int | None) -> None:
