@@ -77,6 +77,8 @@ TELEGRAM_BOT_TOKEN=полученный_у_BotFather_токен
 
 Пример для Ubuntu/Debian. Выполняйте команды пользователем с `sudo`:
 
+Репозиторий приватный: команда `git clone` ниже требует заранее настроенный deploy key (ключ развёртывания с доступом только на чтение) либо GitHub credential helper (безопасное хранилище учётных данных GitHub). Не помещайте GitHub-токен в URL, `.env` или shell history (историю введённых команд). Без GitHub-доступа доставляйте проверенный commit через `git archive`/`scp`; в таком развёртывании обновление также выполняется новым архивом, а не `git pull`.
+
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-venv nodejs npm git
