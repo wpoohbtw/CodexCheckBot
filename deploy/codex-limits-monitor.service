@@ -1,0 +1,23 @@
+[Unit]
+Description=Codex Limits Monitor Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codexmonitor
+Group=codexmonitor
+WorkingDirectory=/opt/codex-limits-monitor
+EnvironmentFile=/opt/codex-limits-monitor/.env
+ExecStart=/opt/codex-limits-monitor/.venv/bin/python -m codex_monitor
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/codex-limits-monitor/data /opt/codex-limits-monitor/accounts /opt/codex-limits-monitor/logs
+
+[Install]
+WantedBy=multi-user.target
